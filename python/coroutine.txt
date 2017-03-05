@@ -1,0 +1,373 @@
+part 1 ： 介绍生成器和协程
+	生成器可以说是： 一个特殊的函数，普通函数返回一个值，而生成器函数则返回一系列值
+	调用生成器函数仅仅会创建并返回一个generator，不会运行该函数
+	generator仅仅支持执行next()方法
+		yield中止函数，并返回值
+		当运行下一个next()后函数恢复运行，也就是从上一个yield中止的地方开始运行
+		
+	协程coroutine
+		由来：
+			在Python2.5开始，yield可以作为一个表达式expression:在编程中，表达式是表示值的符号的任何合法组合。 每个编程语言和应用程序都有自己的规则，什么是合法和非法的。 例如，在C语言中，x + 5是一个表达式，字符串“MONKEYS”也是这样。
+			我们可以向生成器中传递值，该值会被yield返回
+		协程类似于生成器，但他应用了yield可以接收传值得能力
+			每个协程首先需要运行next()或者send(None)方法启动运行
+			然后函数运行至yield处，准备接收值
+		使用装饰器：
+			防止我们忘记运行next()
+			def coroutine(func):
+				def inner(*args,**kwargs):
+					r = func(*args,**kwargs)
+					next(r)
+					return r
+				return inner
+
+			@coroutine
+			def grep(pattern):
+				print('pattern is %s'%pattern)
+				input_str = 'sdkfkadfkj'
+				while 1:
+					input_str = yield input_str
+
+			r = grep('python')
+		关闭一个协程
+			一个协程可能会无限期的运行，使用coroutine_obj.close()关闭它。注意：Python中的垃圾回收机制也会调用close()
+			close()可以被捕捉，GeneratorExit
+				@coroutine
+				def grep(pattern):
+					print('pattern is %s'%pattern)
+					input_str = 'sdkfkadfkj'
+					try:
+						while 1:
+							input_str = yield input_str
+					except GeneratorExit:
+						print('-------------end-------------')
+
+				r = grep('python')
+				r.close()
+			不要忽略这个异常
+			
+		抛出一个异常
+			我们可以向coroutine中主动传递一个异常
+			异常源于yield表达式
+			可以用正常的方式捕获该异常
+			
+	协程与generator的区别：
+		尽管有很多相似之处，但他俩是两个不同的概念
+		generator主要目的是返回值
+		而协程倾向于接收值
+		协程和迭代器并无关联
+		协程中可以使用yield产生一个值，但他不能与迭代绑定在一起
+		
+part 2 协程 管道 数据流
+
+	处理管道
+		协程可以被用来处理管道
+			--send()-->| coroutine |--send()-> | coroutine |--send()-->| coroutine |-->
+		只需要将协程串起来，并使用send()方法将数据传送进去
+	管道源头：
+		管道需要一个初始源(产生器)
+			| source |--send()-->| coroutine |--send()-->
+		这个产生器驱动整个管道
+	管道槽 pipeline sinks
+		管道需要一个终点
+			--send()-->| coroutine |--send()-->| sink |
+		收集所有数据send()至sink中，然后由sink来处理
+	一个例子：
+		import time
+		def coroutine(func):
+
+			def inner(*args,**kwargs):
+				r = func(*args,**kwargs)
+				next(r)
+				return r
+			return inner
+
+		# A source 
+		def follow(filename,target):
+			with open(filename) as f:
+				f.seek(0,0)
+				while True:
+					line = f.readline()
+					if not line:
+						time.sleep(1)
+						continue
+					target.send(line)
+
+		# A sink that just prints the lines
+		@coroutine
+		def printer():
+			while True:
+				line = (yield)
+				print(line)
+
+		c = printer()
+		follow('tail',c)
+	解析该例子：
+		| follow() | --send()--> | printer() |
+		critical point： follow is driving entire computation by reading lines and pushing them into the printer() coroutine 
+	管道过滤器 pipeline filters
+		中间阶段既收又发
+			--send()-->| coroutine |--send()-->
+		通常执行某些数据转换，过滤，路由等
+	过滤器例子
+		# pipeline filters
+		@coroutine
+		def grep(pattern, target):
+			while True:
+				line = (yield).strip()
+				if pattern in line:
+					target.send(line)
+
+		follow('tail',grep('hello',printer()))
+		# 本例中  | follow() |--send()-->| grep() |--send()-->| printer() |
+	插曲
+		生成器使用迭代的方式从管道中拉取数据，而协程则使用send()的方式向管道中传递数据
+		
+	Being Branchy 分支
+		with coroutine, you can send data to multiple destinations
+			| source |--send()-->| coroutine |--send()-->| coroutine |--send()-->| coroutine |
+											 |--send()-->| coroutine |--send()-->| coroutine |
+											 |--send()-->| coroutine |--send()-->| coroutine |
+		the source simply send data，further routing of that data could be arbitrarily complex
+	broadcasting 广播
+		向多个对象发送数据
+			@coroutine
+			def broadcast(targets):
+				while True:
+					line = (yield )
+					for i in targets:
+						i.send(line)
+		this takes a sequence of coroutines and sends recived items to all of them 
+		
+	插曲
+		coroutines privide more pwerful data routing possiblities than simple iterators
+		如果您构建了一个简单的数据处理组件集合，您可以将它们粘合在一起成为管道，分支，合并等复杂的排列。
+		although there are some limitation
+	coroutines vs objects
+		coroutines are somewhat similar to OO design patterns involving simple handler objects 协程有些相似涉及简单的处理对象面向对象的设计模式
+			@coroutine
+			def grep(pattern, target):
+				while True:
+					line = (yield).strip()
+					if pattern in line:
+						target.send(line)
+
+			class grepHandler(object):
+				def __init__(self, pattern, target):
+					self.pattern = pattern
+					self.target = target
+				def send(self,line):
+					if self.pattern in line:
+						self.target.send(line)
+		一个毫无疑问的简单概念
+			协程是一种函数定义方法
+		if you define a handler class
+			你需要定义一个类
+			定义两个方法
+			可能还需要定义一个基类以及导入一个库
+		coroutine更快
+		coroutine和class都是创建对象，但是send时class需要在self中查找pattern和target。
+
+part 3  coroutines and event dispatching协程和事件分派
+
+	event handling 事件处理
+		coroutines can be used to write various components that process event stream协程可以用来编写处理事件流的各个组件
+		来一个例子：
+	要解决的问题
+		芝加哥交通管理局（CTA）为其大部分公共汽车配备实时GPS跟踪
+		您可以在大街上的每一辆公共汽车上获取当前数据，作为一个大型XML文档
+	XML解析
+		有许多的方式来解析XML
+		比较经典(老)的途径：SAX
+		SAX是一个事件驱动的接口
+	一些问题
+		SAX可以使用较小的内存处理巨量的xml文件
+		但是SAX的事件驱动的特性使他较为低级和尴尬
+	xml sucks, dict rock!
+		import xml.sax
+		def coroutine(func):
+			def inner(*args,**kwargs):
+				r = func(*args,**kwargs)
+				next(r)
+				return r
+			return inner
+
+		class EventHandler(xml.sax.ContentHandler):
+			def __init__(self,target):
+				self.target = target
+			def startElement(self, name, attrs):
+				self.target.send(('start',(name,attrs._attrs)))
+			def characters(self, content):
+				self.target.send(('text',content))
+			def endElement(self, name):
+				self.target.send(('end',name))
+
+		@coroutine
+		def buses_to_dicts(target):
+			while True:
+				event, value = (yield)
+				if event == 'start' and value[0] == 'bus':
+					busdict = {}
+					fragment = []
+					while True:
+						event, value = (yield)
+						if event == 'start': fragment = []
+						elif event == 'text': fragment.append(value)
+						elif event == 'end':
+							if value != 'bus':
+								busdict[value] = ''.join(fragment)
+							else:
+								target.send(busdict)
+								break
+
+		@coroutine
+		def filter_on_field(field,value,target):
+			while True:
+				d = (yield)
+				if d.get(field) == value:
+					target.send(d)
+
+		@coroutine
+		def bus_locations():
+			while True:
+				bus = (yield)
+				print("%(route)s,%(id)s,\"%(direction)s\","\
+				"%(latitude)s,%(longitude)s" % bus)
+
+		xml.sax.parse("bus01.xml",
+			EventHandler(
+				buses_to_dicts(
+						filter_on_field("route","22",
+								filter_on_field("direction","North Bound",bus_locations())
+						)
+				)
+		))
+
+part 4  从数据处理到并发编程
+
+	故事目前为止
+		coroutines are similar to generator 
+		您可以通过设置管道，数据流图表等来处理数据
+		您可以创建小型处理组件的集合，并将它们连接在一起
+		您可以使用具有棘手执行代码的协程（例如，事件驱动系统）
+	一个通用的主题
+		我们send数据到协程
+		我们使用队列发送数据到线程
+		我们使用messagees发送数据到进程
+		协程自然的卷入到了线程和分布式系统
+	基本并发
+		你可以通过添加额外的层将协程包装进线程或者子进程
+	协程与线程结合实例
+		from threading import Thread
+		import queue
+		@coroutine
+		def threaded(target):
+			message = queue.Queue()
+			def run_target():
+				while True:
+					item = message.get()		# 从队列中获取
+					if item is GeneratorExit:	# 如果协程close()，则关闭操作的协程对象
+						target.close()
+						return
+					else:
+						target.send(item)
+			Thread(target=run_target).start()	# 启动一个新的线程并运行
+			try:
+				while True:
+					item = (yield )
+					message.put(item)
+			except GeneratorExit:
+				message.put(GeneratorExit)
+		
+		xml.sax.parse("allroutes.xml", EventHandler(
+			buses_to_dicts(
+				threaded(
+					filter_on_field("route","22", filter_on_field("direction","North Bound",bus_locations()))
+				)
+			)
+		))
+	执行vs执行环境
+		使用协程，将任务的执行流程从执行环境中分离
+		协程就是执行流程
+		执行环境就是你所选择的线程、子进程……
+	警告：
+		大量的协程与线程或者进程的集合可能是一个比较好的编写非维护性应用的方式
+		但这会导致你的应用运行起来很慢
+		如果想要清楚的知道什么时候该这样用，你需要细心的学习该问题
+	一些隐藏的危险：
+		协程的send()方法必须正确的同步
+		当一个协程正在执行时，你调用其send()方法，你的程序可能会崩溃
+		比如：多线程发送数据到同一个目标协程
+	局限性：
+		不能将协程作为一个回路
+			source-->coroutine-->coroutine
+						|<-----------|
+		堆栈的发送建立了一种调用栈（send()不返回，直到目标yield）
+		如果你调用一个正在执行send()的协程，就会返回一个错误
+		send()并不会暂停程序的执行
+
+part 5 将协程作为任务
+
+	任务的概念 task
+		在并发编程中，通常将问题细分为“任务”
+		任务几个基本的特性
+			独立的控制流
+			内部状态
+			可以被调度(暂停/恢复)
+			可以与其他任务通信
+		声明：协程就是任务
+	协程是否是任务
+		首先 协程拥有自己的控制流
+		其次 协程和其他Python函数一样，由一系列语句构成
+		协程有自己的内部状态，比如说：局部变量，协程的局部变量的生命周期与协程的活动时间相同，他们共同建立一个执行环境
+		协程可以进行通信，send()方法可以向协程中发送数据，yield表达式可以接收
+		协程可以暂停和恢复，yield暂停执行，send()恢复执行，close()终止执行
+	我们可以确信：
+		很明显，协程看起来就是task
+		但协程不是线程或者子进程
+		一个问题：你可以在不使用这些概念的情况下执行多任务么？
+		是否可以只使用协程实现多任务
+
+part 6  操作系统的崩溃课程
+	
+	程序执行：
+		在cpu上，程序是一系列指令
+		当运行时，没有一次做多个事情的概念（或任何种类的任务切换）
+	多任务：
+		cpu对多任务一脸懵逼
+		应用程序也是一脸懵逼
+		那么，肯定有个东西了解多任务
+		这就是操作系统
+	操作系统：
+		正如您所希望知道的，操作系统（例如，Linux，Windows）负责在您的计算机上运行程序
+		操作系统允许多个进程同时执行
+		它实现多进程同时执行的方式是快速切换
+		问题：它是如何实现的？
+	难题：
+		当cpu运行你的程序时，他没有运行操作系统，那么问题来了：既然操作系统没有被运行，那么它是如何实现切换的呢？
+	中断和陷阱
+		操作系统通常有两种方式获得控制权：
+			中断：某些硬件相关的信号(数据接收，时间戳，关键字)
+			traps： 所有的软件产生的信号
+		
+		
+	
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+
+			
+	
