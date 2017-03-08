@@ -1,23 +1,24 @@
 本文是./Coroutine.pdf 的翻译&学习笔记。 
 
 part 1 ： 介绍生成器和协程
-	生成器可以说是： 一个特殊的函数，普通函数返回一个值，而生成器函数则返回一系列值
-	调用生成器函数仅仅会创建并返回一个generator，不会运行该函数
-	generator仅仅支持执行next()方法
-		yield中止函数，并返回值
-		当运行下一个next()后函数恢复运行，也就是从上一个yield中止的地方开始运行
+	生成器generator：
+		生成器是一个特殊的函数。普通函数返回一个值，而生成器函数则返回一系列值。
+		调用生成器函数仅仅会创建并返回一个generator，不会运行该函数
+		generator仅仅支持执行next()方法
+			yield中止函数，并返回值
+			当运行下一个next()后函数恢复运行，也就是从上一个yield中止的地方开始运行
 		
 	协程coroutine
 		由来：
 			在Python2.5开始，yield可以作为一个表达式expression
 				expression:在编程中，表达式是表示值的符号的任何合法组合。 每个编程语言和应用程序都有自己的规则，什么是合法和非法的。 
 					例如，在C语言中，x + 5是一个表达式，字符串“MONKEYS”也是这样。
-			我们可以向生成器中传递值，该值会被yield返回
-		协程类似于生成器，但他应用了yield可以接收传值得能力
+			我们可以使用send()方法向生成器传递值，该值会被yield表达式捕获   
+		协程类似于生成器，但他应用了yield可以接收传值的能力
 			每个协程首先需要运行next()或者send(None)方法启动运行
 			然后函数运行至yield处，准备接收值
 		使用装饰器：
-			防止我们忘记运行next()
+			这个装饰器主要是为了防止我们忘记运行next()
 			def coroutine(func):
 				def inner(*args,**kwargs):
 					r = func(*args,**kwargs)
@@ -34,7 +35,7 @@ part 1 ： 介绍生成器和协程
 
 			r = grep('python')
 		关闭一个协程
-			一个协程可能会无限期的运行，使用coroutine_obj.close()关闭它。注意：Python中的垃圾回收机制也会调用close()
+			一个协程可能会无限期的运行，我们可以使用coroutine_obj.close()关闭它。注意：Python中的垃圾回收机制也会调用close()
 			close()可以被捕捉，GeneratorExit
 				@coroutine
 				def grep(pattern):
@@ -48,7 +49,6 @@ part 1 ： 介绍生成器和协程
 
 				r = grep('python')
 				r.close()
-			不要忽略这个异常
 			
 		抛出一个异常
 			我们可以向coroutine中主动传递一个异常
@@ -372,24 +372,26 @@ part 7  让我们构建一个os  ps：系上你的安全带
 		大量的工作集中在事件驱动或者 反应器模式(比如twisted)
 		协程则与twisted完全不同
 	步骤一： 定义任务
-		定义一个任务对象：
-			# The tasks is the wrapper of the coroutines
+		定义一个task类，这个类用来封装coroutine
+			# The tasks is the wrapper of the coroutines 
 			class Task(object):
 				taskid = 0
 				def __init__(self, target):
-					Task.taskid += 1
+					Task.taskid += 1		# 为每个task定义一个tid
 					self.tid = Task.taskid
-					self.target = target
-					self.sendval = None
+					self.target = target	# target指向coroutine对象
+					self.sendval = None		
 				def run(self):
+					# 向coroutine中send()数据，并返回结果
 					return self.target.send(self.sendval)
 	步骤二：定义一个调度器
 		class Scheduler(object):
 			def __init__(self):
 				self.ready = Queue()       # 一个队列，用来按照顺序存储task
 				self.taskmap = {}
-			# 新建一个task，然后将该task存入映射图中，并将task放入队列中
+			
 			def new(self,target):
+				# 将coroutine进行封装，并加入调度列中
 				newtask = Task(target)
 				self.taskmap[newtask.tid] = newtask
 				self.schedule(newtask)
@@ -424,18 +426,7 @@ part 7  让我们构建一个os  ps：系上你的安全带
 					yield
 	步骤三： 改进调度器
 		class Scheduler(object):
-			def __init__(self):
-				self.ready = Queue()       # 一个队列，用来按照顺序存储task
-				self.taskmap = {}
-			# 新建一个task，然后将该task存入映射图中，并将task放入队列中
-			def new(self,target):
-				newtask = Task(target)
-				self.taskmap[newtask.tid] = newtask
-				self.schedule(newtask)
-				return newtask.tid
-			# 将task放入队列中
-			def schedule(self,task):
-				self.ready.put(task)
+			...
 			# 将一个task从映射图中删除
 			def exit(self,task):
 				del self.taskmap[task.tid]
@@ -450,22 +441,13 @@ part 7  让我们构建一个os  ps：系上你的安全带
 						continue
 					self.schedule(task)
 		在真正的操作系统中，traps是进程请求系统调用时发出的
-		而在我们的os中，调度器作为os，yield作为trap
+		而在我们的os中，调度器作为os，yield作为trap,yield可以向调度器传值
 		为了请求调度器的服务，任务将使用带有值的yield语句
 	步骤四： 系统调用
+		系统调用主要完成两个操作：
+			1 执行相关操作
+			2 调度该任务
 		添加系统调用功能：
-			from queue import Queue
-
-			# The tasks is the wrapper of the coroutines
-			class Task(object):
-				taskid = 0
-				def __init__(self, target):
-					Task.taskid += 1
-					self.tid = Task.taskid
-					self.target = target
-					self.sendval = None
-				def run(self):
-					return self.target.send(self.sendval)
 
 			class SystemCall(object):
 				def handler(self):
@@ -473,27 +455,11 @@ part 7  让我们构建一个os  ps：系上你的安全带
 			# 系统调用： 获取task的tid
 			class GetTid(SystemCall):
 				def handler(self):
-					self.task.sendval = self.task.tid   # 就好像：调用系统调用后返回了一个值
-					self.sched.schedule(self.task)      # 下次运行该task后就能获取到该值
+					self.task.sendval = self.task.tid   # 第一步： 获取当前task的tid
+					self.sched.schedule(self.task)      # 第二步： 调度该task
 
 			class Scheduler(object):
-				def __init__(self):
-					self.ready = Queue()       # 一个队列，用来按照顺序存储task
-					self.taskmap = {}
-				# 新建一个task，然后将该task存入映射图中，并将task放入队列中
-				def new(self,target):
-					newtask = Task(target)
-					self.taskmap[newtask.tid] = newtask
-					self.schedule(newtask)
-					return newtask.tid
-				# 将task放入队列中
-				def schedule(self,task):
-					self.ready.put(task)
-
-				# 将该task从映射图中删除
-				def exit(self,task):
-					del self.taskmap[task.tid]
-
+				......
 				# 这是一个loop，不停的从队列中获取task并运行，然后将运行后的task放入队列
 				def mainloop(self):
 					while self.taskmap:
@@ -537,7 +503,271 @@ part 7  让我们构建一个os  ps：系上你的安全带
 			创建task
 			杀死一个task
 			等待task 退出
-		创建新的task
+		创建task
+			定义一个系统调用：
+				class NewTask(SystemCall):
+					def __init__(self,target):
+						super().__init__()
+						self.target = target
+
+					def handler(self):
+						# 第一步： 创建一个新的task
+						tid = self.sched.new(self.target)
+						self.task.sendval = tid
+						# 第二步： 调度该task
+						self.sched.schedule(self.task)
+		kill task
+			定义一个系统调用：
+				class KillTask(SystemCall):
+
+					def __init__(self,tid):
+						'''
+						:param tid:  要kill的task的tid
+						'''
+						super().__init__()
+						self.tid = tid
+
+					def handler(self):
+						# 第一步： kill目标task
+						task = self.sched.taskmap.get(self.tid,None)	
+						if task:
+							task.target.close()
+							self.task.sendval = True
+							self.sched.schdule(task)
+							self.sched.exit(task)
+						else:
+							self.task.sendval = False
+						# 第二步： 调度该task
+						self.sched.schedule(self.task)
+		Task waiting
+			就是说，a task需要等待b task执行完成后才能继续运行
+			先来讲一下大体思路：
+				1 我们为调度程序设置一个字典，用来存储waiting task(相当于a task) 与 wait for task(相当于b task)的关系
+				2 字典的键值对该如何设计呢？ 
+					a方案： 假如是 a:[b1,b2...] 这样设计，那么a可以有很多的wait for task，但缺点就是当某个wait for task运行完后，
+							我们需要遍历该字典，才能知道可以运行哪些task
+					b方案： 假如是 b:[a1,a2...] 这样设计，那么当b完成后我们可以很快的知道哪些task可以运行了，缺点就是无法为a设置
+							多个wait for task。(当然也可以设置多个，但很麻烦)
+				3 我们偷个懒：每个task仅允许一个wait for task 。所以我们选择b方案。为调度器设立一个新的属性 self.exit_wating = {}
+				4 当一个task运行完成后(也就是调度器执行了exit(task))，我们需要检查该task是否有关联的waiting task
+					如果有的话： 将waiting task放入ready队列
+					没有： do noting
+				5 为调度器添加一个方法wait_for_exit：该方法接收两个参数：waiting_task wait_for_task_tid
+					该方法会在调度器的exit_waiting中生成/修改对应的键值对
+					返回是否成功
+				5 创建一个系统调用 TaskWait
+					该系统调用接受一个参数，接收wait for task的tid
+					运行调度器的wait_for_exit方法
+					若失败则调度该task
+			设计讨论：
+				task引用其他task的唯一方法是使用调度程序分配的整数task的tid
+				这样进行封装很安全
+				使得task相互分离
+				他将所有的task管理存放在调度器中
+		插曲：
+			迄今为止，我们已经实现;
+				多任务运行
+				创建新task
+				一些基本的task管理
+			下一步：
+				我们来实现一个web服务器，或者只是一个简单的echo服务器
+		一个简单地echo服务器
+			def handle_client(client, addr):
+				print("Connection from", addr)
+				while True:
+					data = client.recv(65536)
+					if not data:
+						break
+					client.send(data)
+				client.close()
+				print("Client closed")
+				yield  # Make the function a generator/coroutine
+
+
+			def server(port):
+				print("Server starting")
+				sock = socket.socket()
+				sock.bind(("", port))
+				sock.listen(5)
+				while True:
+					# 阻塞
+					client, addr = sock.accept()
+					yield NewTask(handle_client(client, addr))
+
+			def alive():
+				while True:
+					print("I'm alive!")
+					yield
+
+			sched = Scheduler()
+			sched.new(alive())
+			sched.new(server(45000))
+			sched.main_loop()
+			'''
+			输出：
+				I'm alive!
+				Server starting
+				调度器锁定，停止运行其他task
+			'''
+			
+			在真正的操作系统中，os会暂停整个Python解释器转而运行其他task。当I/O操作完成后才会调度该task
+			而我们自己的操作系统显然很不尽如人意(任何阻塞操作都会冻结整个程序)
+		非阻塞I/O 
+			使用select模块，select可以监控多个文件描述符，我们可以获取那些满足某些条件(可读，可写……)的文件描述符。
+			
+	步骤6： I/O waiting
+		1 我们决定使用select模块监控文件描述符
+		2 定义I/O系统调用：
+			class ReadWait(SystemCall):
+				def __init__(self,f):
+					self.f = f
+				def handle(self):
+					fd = self.f.fileno()
+					self.sched.wait_for_read(self.task,fd)
+
+			class WriteWait(SystemCall):
+				def __init__(self,f):
+					self.f = f
+				def handle(self):
+					fd = self.f.fileno()
+					self.sched.wait_for_write(self.task,fd)
+		3 为调度器添加两个新的属性,用来出处就绪的文件描述符
+			    def __init__(self):
+					...
+					self.read_waiting = {}	# fd可读
+					self.write_waiting = {}	# fd可写
+			
+		4 为调度器添加新的方法：
+			class Scheduler(object):
+				...
+				def iopoll(self, timeout):
+					'''
+					检测并运行条件满足的文件描述符所对应的task
+					:param timeout:  调用select时设定超时时间
+					:return:  None
+					'''
+					if self.read_waiting or self.write_waiting:
+						r, w, e = select.select(self.read_waiting,
+												self.write_waiting, [], timeout)
+
+						for fd in r: self.schedule(self.read_waiting.pop(fd))
+						for fd in w: self.schedule(self.write_waiting.pop(fd))
+						
+				def wait_for_read(self, task, fd):
+					self.read_waiting[fd] = task
+
+				def wait_for_write(self, task, fd):
+					self.write_waiting[fd] = task
+		
+		5  如何设置轮询iopoll？ 或者说iopoll方法该放在哪里？
+			方式一：
+				class Scheduler(object):
+					...
+					def mainloop(self):
+						while self.taskmap:
+							self.iopoll(0) # 放在这里的话，表示： 在每一次运行task之前都运行一次
+							task = self.ready.get()
+						try:
+							result = task.run()
+							...
+				这样有些不太合理：
+					运行self.iopoll()的频率是不是有些过于频繁了。如果队列中的task过多，就可能导致cpu资源浪费。
+					每次运行select()，实际上会进行一次Python解释器与真正内核的上下文切换
+			方式二：
+				为调度器添加一个新的方法：
+				    def iotask(self):
+						while True:
+							if self.ready.empty():
+								self.iopoll(None)
+							else:
+								self.iopoll(0)
+							yield
+				修改mainloop()方法
+					def mainloop(self):
+						self.new(self.iotask()) # Launch I/O polls
+						while self.taskmap:
+							task = self.ready.get()
+							...
+				这样，就使得iopoll()和其他普通task一样，被调度运行
+		6  修改echo服务器
+			def handle_client(client,addr):
+				print("Connection from", addr)
+				while True:
+					yield ReadWait(client)
+					data = client.recv(65536)
+					if not data:
+						break
+					yield WriteWait(client)
+					client.send(data)
+				client.close()
+				print("Client closed")
+
+			def server(port):
+				print("Server starting")
+				sock = socket.socket()
+				sock.bind(("",port))
+				sock.listen(5)
+				while True:
+					yield ReadWait(sock)
+					client,addr = sock.accept()
+					yield NewTask(handle_client(client,addr))
+					
+		7  运行一个实例：
+			def alive():
+				while True:
+					print("I'm alive!")
+					yield
+
+			sched = Scheduler()
+			sched.new(alive())
+			sched.new(server(45000))
+			sched.main_loop()
+			
+	wow！
+		我们现在已经完成了一个多任务os
+		他可以并发的执行任务
+		task可以创建 销毁 wait for其他task
+		task可以执行I/O操作 
+		我们甚至可以可以根据这个os写一个并发服务器
+		自舔一波吧，小伙子们！！
+		
+part 8  栈问题
+
+	使用coroutine的限制：
+		当使用协程时，我们无法写出yield（暂停）子例程的协程
+		比如： 
+			def Accept(sock):
+				yield ReadWait(sock)   
+				return sock.accept()	# yield与return无法共用！！！！
+			def server(port):
+				...
+				while True:
+					client,addr = Accept(sock)  # 这里错误
+					yield NewTask(handle_client(client,addr))
+	问题：
+		yield语句只能用于在最高级别挂起的协程
+		我们不能把yield传送到其他函数中
+		就像这样：
+			def bar():
+				yield	# 此yield不会挂起调用自己(也就是bar())函数的“task”(即，它不挂起foo)
+			def foo():
+				bar()   
+	
+	解决方法：
+		有一种方法来创建可挂起的子程序和函数，然而，它只能在任务调度器本身的帮助下完成，并且你必须严格遵守yield语句用法
+		这个方法就是：trampolining 
+		
+	协程 Trampolining
+		先来一个简单的例子：
+			
+	
+			
+
+			
+		
+				
+				
+		
 			
 		
 		
