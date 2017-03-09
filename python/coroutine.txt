@@ -759,6 +759,23 @@ part 8  栈问题
 		
 	协程 Trampolining
 		先来一个简单的例子：
+			# A subroutine
+			def add(x,y):
+				yield x+y
+			# A function that calls a subroutine
+			def main():
+				r = yield add(2,2)
+				print(r)
+				yield
+
+			def run():
+				m = main()
+				# An example of a "trampoline"
+				sub = m.send(None)  # sub 就是add(2,2)这个generator
+				result = sub.send(None)    # result 就是(2+2)
+				m.send(result)
+
+			run()
 			
 	
 			
