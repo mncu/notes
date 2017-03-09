@@ -738,7 +738,7 @@ part 8  栈问题
 		比如： 
 			def Accept(sock):
 				yield ReadWait(sock)   
-				return sock.accept()	# yield与return无法共用！！！！
+				return sock.accept()	# yield与return可以共用，但return不能返回值！！！！
 			def server(port):
 				...
 				while True:
